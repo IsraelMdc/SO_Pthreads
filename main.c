@@ -12,13 +12,15 @@
 #include <string.h>
 
 
-#define MAX_MATRIX_ROWS 9
-#define MAX_MATRIX_COLS 9
-#define BLOCK_SIZE_X 3 // Tamanho do bloco em linhas
-#define BLOCK_SIZE_Y 3 // Tamanho do bloco em colunas
+#define MAX_MATRIX_ROWS 15000
+#define MAX_MATRIX_COLS 15000
+#define BLOCK_SIZE_X 10 // Tamanho do bloco em linhas
+#define BLOCK_SIZE_Y 10 // Tamanho do bloco em colunas
 #define QTD_MACROBLOCKS (MAX_MATRIX_ROWS / BLOCK_SIZE_X) * (MAX_MATRIX_COLS / BLOCK_SIZE_Y) // Quantidade de blocos na matriz
+#define QTD_THREADS 4 // Quantidade de threads a serem criadas
 
 #define SEED 42
+
 
 
 int** matrix; // Matriz global para ser usada pelas threads
@@ -26,20 +28,11 @@ int** matrix; // Matriz global para ser usada pelas threads
 int n_blocks_row = MAX_MATRIX_ROWS / BLOCK_SIZE_X;
 int n_blocks_col = MAX_MATRIX_COLS / BLOCK_SIZE_Y;
 
-typedef struct {
-	int id;
-	int values[BLOCK_SIZE_X][BLOCK_SIZE_Y];
-} MacroBlock;
+int next_block = 0; // Índice do próximo bloco disponível
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER; // Mutex para contagem de primos
+pthread_mutex_t block_mutex = PTHREAD_MUTEX_INITIALIZER; // Mutex para controle de blocos
 
-
-typedef struct {
-	int id; // ID da block queue
-	MacroBlock block_info; // Informações do bloco que a thread irá processar
-	int front; // Índice do próximo bloco a ser processado
-	int rear;  // Índice do último bloco processado
-} BlockQueue;
-
-
+int total_primes = 0; // Contador global de números primos encontrados
 
 // Função para gerar número aleatório entre 0 e 31999
 int randint() {
@@ -86,7 +79,6 @@ void insert_matrix(int** matrix) {
 	for (int i = 0; i < MAX_MATRIX_ROWS; i++) {
 		for (int j = 0; j < MAX_MATRIX_COLS; j++) {
 			matrix[i][j] = randint();
-			int numero = matrix[i][j];
 			// Descomente a linha abaixo para ver os valores
 			//printf("%d ", matrix[i][j]);
 		}
@@ -105,10 +97,7 @@ double serial_search(int** matrix) {
 		}
 	}
 	double serial_end_time = (double)clock() / CLOCKS_PER_SEC; // Para o cronômetro
-	/*printf("\n * * Matrix Size : %d x %d * *\n", MAX_MATRIX_COLS, MAX_MATRIX_ROWS);
-	printf("Busca serial concluida.\n");
-	printf("\nTempo de execucao serial: %.2f segundos\n", serial_end_time - serial_start_time);
-	printf("Total de numeros primos encontrados: %d\n", cont_primos);*/
+	printf("Total de numeros primos encontrados: %d\n", cont_primos); // Descomente para ver o total de primos encontrados
 	return serial_end_time - serial_start_time; // Retorna o tempo de execução
 }
 
@@ -123,41 +112,69 @@ void print_matrix(int** matrix)
 	}
 }
 
-void split_into_macroblocks(int** matrix) {
-	MacroBlock* blocks = malloc(sizeof(MacroBlock) * QTD_MACROBLOCKS);
-	int block_id = 0;
+void* count_primes_in_block(void* arg) {
+	int local_primes = 0;
 
-	for (int i = 0; i < MAX_MATRIX_ROWS; i += BLOCK_SIZE_X) {
-		for (int j = 0; j < MAX_MATRIX_COLS; j += BLOCK_SIZE_Y) {
-			blocks[block_id].id = block_id;
-			printf("Macroblock %d:\n", block_id);
+	while (1) {
+		pthread_mutex_lock(&block_mutex);
+		int current_block = next_block;
+		if (current_block >= QTD_MACROBLOCKS) {
+			pthread_mutex_unlock(&block_mutex);
+			break; // Todos os blocos foram atribuídos
+		}
+		next_block++;
+		pthread_mutex_unlock(&block_mutex);
 
-			for (int rows = 0; rows < BLOCK_SIZE_X; ++rows) {
-				for (int cols = 0; cols < BLOCK_SIZE_Y; ++cols) {
-					blocks[block_id].values[rows][cols] = matrix[i + rows][j + cols];
-					printf("%d ", blocks[block_id].values[rows][cols]);
+		// Calcular coordenadas do bloco
+		int block_row = (current_block / n_blocks_col) * BLOCK_SIZE_X;
+		int block_col = (current_block % n_blocks_col) * BLOCK_SIZE_Y;
+
+		// Processar o bloco
+		for (int i = block_row; i < block_row + BLOCK_SIZE_X; i++) {
+			for (int j = block_col; j < block_col + BLOCK_SIZE_Y; j++) {
+				if (ehPrimo(matrix[i][j])) {
+					local_primes++;
 				}
-				printf("\n"); // nova linha após terminar cada linha do bloco
 			}
-
-			printf("\n");
-			block_id++;
 		}
 	}
+
+	// Atualizar total global apenas uma vez
+	pthread_mutex_lock(&mutex);
+	total_primes += local_primes;
+	pthread_mutex_unlock(&mutex);
+
+	pthread_exit(NULL);
 }
 
-//void print_macroblock() {
-//	MacroBlock* blocks = malloc(sizeof(MacroBlock) * QTD_MACROBLOCKS);
-//	printf("Macrobloco %d:\n", blocks->id);
-//	for (int i = 0; i < BLOCK_SIZE_X; ++i) {
-//		for (int j = 0; j < BLOCK_SIZE_Y; ++j) {
-//			printf("%d ", blocks[blocks->id].values[i][j]);
-//		}
-//		printf("\n");
-//	}
-//	printf("\n");
-//}
+double parallel_search() {
+	pthread_t threads[QTD_THREADS];
+	total_primes = 0;
+	next_block = 0; // Resetar índice dos blocos
 
+	pthread_mutex_init(&mutex, NULL);
+	pthread_mutex_init(&block_mutex, NULL);
+
+	double start_time = (double)clock() / CLOCKS_PER_SEC;
+
+	for (int t = 0; t < QTD_THREADS; t++) {
+		pthread_create(&threads[t], NULL, count_primes_in_block, NULL);
+	}
+
+	for (int t = 0; t < QTD_THREADS; t++) {
+		pthread_join(threads[t], NULL);
+	}
+
+	double end_time = (double)clock() / CLOCKS_PER_SEC;
+
+	// Imprime o total de números primos encontrados
+	printf("Total de numeros primos encontrados: %d\n", total_primes);
+
+	pthread_mutex_destroy(&mutex);
+	pthread_mutex_destroy(&block_mutex);
+
+	return end_time - start_time;
+}
 /* **********  MENU  ********** */
 void menu(int** matrix) {
 	int option;
@@ -197,7 +214,6 @@ void menu(int** matrix) {
 			printf("** Printing each block in matrix...    **\n");
 			printf("-----------------------------------------\n");
 			// Exemplo: imprime o macrobloco 4
-			split_into_macroblocks(matrix);
 
 			break;
 
@@ -212,7 +228,7 @@ void menu(int** matrix) {
 			/* PARALLEL PRIME COUNTING TEST */
 			printf("** Running Parallel Count...           **\n");
 			printf("-----------------------------------------\n");
-
+			time_parallel = parallel_search();
 			printf("** Run time: %.6f seconds          **\n", time_parallel); // Placeholder for run time
 			break;
 		case 5:
@@ -222,6 +238,7 @@ void menu(int** matrix) {
 			printf("** Running Serial Count...             **\n");
 			printf("-----------------------------------------\n");
 			time_serial = serial_search(matrix);
+			time_parallel = parallel_search();
 			time_speedup = time_serial / time_parallel;
 			printf("** Speed Up: %.6f seconds          **\n", time_speedup);
 
@@ -239,7 +256,7 @@ void menu(int** matrix) {
 int main(int argc, char* argv[]) {
 	srand(SEED); // Define a semente do gerador de números aleatórios
 
-	int** matrix = allocate_matrix();
+	matrix = allocate_matrix();
 	insert_matrix(matrix);
 
 	menu(matrix);
