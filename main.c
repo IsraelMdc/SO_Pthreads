@@ -12,8 +12,8 @@
 #include <string.h>
 
 
-#define MAX_MATRIX_ROWS 15000
-#define MAX_MATRIX_COLS 15000
+#define MAX_MATRIX_ROWS 100
+#define MAX_MATRIX_COLS 100
 #define BLOCK_SIZE_X 10 // Tamanho do bloco em linhas
 #define BLOCK_SIZE_Y 10 // Tamanho do bloco em colunas
 #define QTD_MACROBLOCKS (MAX_MATRIX_ROWS / BLOCK_SIZE_X) * (MAX_MATRIX_COLS / BLOCK_SIZE_Y) // Quantidade de blocos na matriz
@@ -111,6 +111,28 @@ void print_matrix(int** matrix)
 		printf("\n"); // Para quebrar linha entre linhas da matriz
 	}
 }
+
+void print_macroblocks() {
+	printf("== IMPRESSAO DOS MACROBLOCOS DA MATRIZ ==\n");
+	for (int b = 0; b < QTD_MACROBLOCKS; b++) {
+		int block_row = (b / n_blocks_col) * BLOCK_SIZE_X;
+		int block_col = (b % n_blocks_col) * BLOCK_SIZE_Y;
+
+		printf("\n--- Macrobloco %d ---\n", b);
+		printf("Posicao inicial na matriz: [%d][%d]\n", block_row, block_col);
+		printf("Conteudo:\n");
+
+		for (int i = block_row; i < block_row + BLOCK_SIZE_X; i++) {
+			for (int j = block_col; j < block_col + BLOCK_SIZE_Y; j++) {
+				printf("%6d ", matrix[i][j]);
+			}
+			printf("\n");
+		}
+	}
+	printf("\n== FIM DA IMPRESSAO DOS MACROBLOCOS ==\n");
+}
+
+
 
 void* count_primes_in_block(void* arg) {
 	int local_primes = 0;
@@ -213,7 +235,7 @@ void menu(int** matrix) {
 		case 2:
 			printf("** Printing each block in matrix...    **\n");
 			printf("-----------------------------------------\n");
-			// Exemplo: imprime o macrobloco 4
+			print_macroblocks();
 
 			break;
 
